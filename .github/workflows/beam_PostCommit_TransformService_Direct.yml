@@ -16,8 +16,6 @@
 name: PostCommit TransformService Direct
 
 on:
-  issue_comment:
-    types: [created]
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:
@@ -86,7 +84,7 @@ jobs:
         with:
           gradle-command: :sdks:python:test-suites:direct:xlang:transformServicePythonUsingJava
           arguments: |
-            -PcompileAndRunTestsWithJava11 \
+            -PtestJavaVersion=11 \
             -Pjava11Home=$JAVA_HOME_11_X64 \
             -PuseWheelDistribution \
             -PpythonVersion=${{ matrix.python_version }} \

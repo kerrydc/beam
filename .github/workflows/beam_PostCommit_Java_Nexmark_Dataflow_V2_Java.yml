@@ -18,8 +18,6 @@
 name: PostCommit Java Nexmark Dataflow V2 Java
 
 on:
-  issue_comment:
-    types: [created]
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:
@@ -109,7 +107,7 @@ jobs:
         with:
           gradle-command: :sdks:java:testing:nexmark:run
           arguments: |
-            -PcompileAndRunTestsWithJava${{ matrix.java_version }} \
+            -PtestJavaVersion${{ matrix.java_version }} \
             -Pjava${{ matrix.java_version }}Home=$JAVA_HOME_${{ matrix.java_version }}_X64 \
             -Pnexmark.runner.version=V2 \
             -Pnexmark.runner=:runners:google-cloud-dataflow-java \

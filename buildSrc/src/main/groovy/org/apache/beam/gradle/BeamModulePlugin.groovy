@@ -488,13 +488,6 @@ class BeamModulePlugin implements Plugin<Project> {
 
     project.ext.mavenGroupId = 'org.apache.beam'
 
-    // Automatically use the official release version if we are performing a release
-    // otherwise append '-SNAPSHOT'
-    project.version = '2.52.0'
-    if (!isRelease(project)) {
-      project.version += '-SNAPSHOT'
-    }
-
     // Default to dash-separated directories for artifact base name,
     // which will also be the default artifactId for maven publications
     project.apply plugin: 'base'
@@ -867,7 +860,7 @@ class BeamModulePlugin implements Plugin<Project> {
         slf4j_jul_to_slf4j                          : "org.slf4j:jul-to-slf4j:$slf4j_version",
         slf4j_log4j12                               : "org.slf4j:slf4j-log4j12:$slf4j_version",
         slf4j_jcl                                   : "org.slf4j:slf4j-jcl:$slf4j_version",
-        snappy_java                                 : "org.xerial.snappy:snappy-java:1.1.10.3",
+        snappy_java                                 : "org.xerial.snappy:snappy-java:1.1.10.4",
         spark_core                                  : "org.apache.spark:spark-core_2.11:$spark2_version",
         spark_streaming                             : "org.apache.spark:spark-streaming_2.11:$spark2_version",
         spark3_core                                 : "org.apache.spark:spark-core_2.12:$spark3_version",
@@ -939,6 +932,29 @@ class BeamModulePlugin implements Plugin<Project> {
       // https://github.com/tbroyer/gradle-errorprone-plugin#jdk-16-support
       options.errorprone.errorproneArgs.add("-XepDisableAllChecks")
       // The -J prefix is needed to workaround https://github.com/gradle/gradle/issues/22747
+      options.forkOptions.jvmArgs += [
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
+        "-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
+        "-J--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
+        "-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED"
+      ]
+    }
+
+    project.ext.setJava21Options = { CompileOptions options ->
+      def java17Home = project.findProperty("java17Home")
+      options.fork = true
+      options.forkOptions.javaHome = java17Home as File
+      options.compilerArgs += ['-Xlint:-path']
+      // Error prone requires some packages to be exported/opened for Java 17
+      // Disabling checks since this property is only used for Jenkins tests
+      // https://github.com/tbroyer/gradle-errorprone-plugin#jdk-16-support
+      options.errorprone.errorproneArgs.add("-XepDisableAllChecks")
       options.forkOptions.jvmArgs += [
         "-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
         "-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
@@ -1499,7 +1515,7 @@ class BeamModulePlugin implements Plugin<Project> {
         options.errorprone.errorproneArgs.add("-Xep:Slf4jLoggerShouldBeNonStatic:OFF")
       }
 
-      if (project.hasProperty("compileAndRunTestsWithJava11")) {
+      if (project.findProperty('testJavaVersion') == "11") {
         def java11Home = project.findProperty("java11Home")
         project.tasks.compileTestJava {
           options.fork = true
@@ -1511,7 +1527,7 @@ class BeamModulePlugin implements Plugin<Project> {
           useJUnit()
           executable = "${java11Home}/bin/java"
         }
-      } else if (project.hasProperty("compileAndRunTestsWithJava17")) {
+      } else if (project.findProperty('testJavaVersion') == "17") {
         def java17Home = project.findProperty("java17Home")
         project.tasks.compileTestJava {
           setCompileAndRuntimeJavaVersion(options.compilerArgs, '17')
@@ -1520,6 +1536,16 @@ class BeamModulePlugin implements Plugin<Project> {
         project.tasks.withType(Test).configureEach {
           useJUnit()
           executable = "${java17Home}/bin/java"
+        }
+      } else if (project.findProperty('testJavaVersion') == "21") {
+        def java21Home = project.findProperty("java21Home")
+        project.tasks.compileTestJava {
+          setCompileAndRuntimeJavaVersion(options.compilerArgs, '21')
+          project.ext.setJava17Options(options)
+        }
+        project.tasks.withType(Test).configureEach {
+          useJUnit()
+          executable = "${java21Home}/bin/java"
         }
       }
 
@@ -2161,7 +2187,7 @@ class BeamModulePlugin implements Plugin<Project> {
       def goRootDir = "${project.rootDir}/sdks/go"
 
       // This sets the whole project Go version.
-      project.ext.goVersion = "go1.21.1"
+      project.ext.goVersion = "go1.21.2"
 
       // Minor TODO: Figure out if we can pull out the GOCMD env variable after goPrepare script
       // completion, and avoid this GOBIN substitution.
@@ -2402,7 +2428,20 @@ class BeamModulePlugin implements Plugin<Project> {
 
     // TODO: Decide whether this should be inlined into the one project that relies on it
     // or be left here.
-    project.ext.applyAvroNature = { project.apply plugin: "com.commercehub.gradle.plugin.avro" }
+    project.ext.applyAvroNature = {
+      project.apply plugin: "com.commercehub.gradle.plugin.avro"
+
+      // add dependency BeamModulePlugin defined custom tasks
+      // they are defined only when certain flags are provided (e.g. -Prelease; -Ppublishing, etc)
+      def sourcesJar = project.tasks.findByName('sourcesJar')
+      if (sourcesJar != null) {
+        sourcesJar.dependsOn project.tasks.getByName('generateAvroJava')
+      }
+      def testSourcesJar = project.tasks.findByName('testSourcesJar')
+      if (testSourcesJar != null) {
+        testSourcesJar.dependsOn project.tasks.getByName('generateTestAvroJava')
+      }
+    }
 
     project.ext.applyAntlrNature = {
       project.apply plugin: 'antlr'
@@ -2412,6 +2451,17 @@ class BeamModulePlugin implements Plugin<Project> {
           generatedSourceDirs += project.generateGrammarSource.outputDirectory
           generatedSourceDirs += project.generateTestGrammarSource.outputDirectory
         }
+      }
+
+      // add dependency BeamModulePlugin defined custom tasks
+      // they are defined only when certain flags are provided (e.g. -Prelease; -Ppublishing, etc)
+      def sourcesJar = project.tasks.findByName('sourcesJar')
+      if (sourcesJar != null) {
+        sourcesJar.mustRunAfter project.tasks.getByName('generateGrammarSource')
+      }
+      def testSourcesJar = project.tasks.findByName('testSourcesJar')
+      if (testSourcesJar != null) {
+        testSourcesJar.dependsOn project.tasks.getByName('generateTestGrammarSource')
       }
     }
 
